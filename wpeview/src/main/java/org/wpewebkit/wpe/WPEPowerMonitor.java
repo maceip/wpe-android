@@ -23,17 +23,19 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Build;
 import android.os.PowerManager;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 
 /**
- * Monitors the system Battery Saver mode and notifies native code when it changes.
+ * WPEPowerMonitor monitors the device's power state (Battery Saver mode) and notifies
+ * the native WebKit layer through JNI. This allows WebKit to reduce resource usage
+ * (animations, timer precision, background tabs) when the device is in power-saving mode.
  *
- * This class listens for ACTION_POWER_SAVE_MODE_CHANGED broadcasts and calls
- * the native nativeOnPowerSaveModeChanged() function to update the GPowerProfileMonitor
- * implementation.
+ * The native layer combines this Battery Saver state with thermal throttling status
+ * from NDK AThermalManager to implement GPowerProfileMonitor for WebKit.
  *
  * The NDK does not expose the user's Battery Saver toggle directly, so this Java
  * class is necessary to detect that system-wide setting.
@@ -41,6 +43,12 @@ import androidx.annotation.NonNull;
 public final class WPEPowerMonitor {
     private static final String LOGTAG = "WPEPowerMonitor";
 
+    /**
+     * Native function to update the C++ GPowerProfileMonitor implementation
+     * when the battery saver mode changes.
+     *
+     * @param isPowerSaveMode true if the device is in Battery Saver mode
+     */
     private static native void nativeOnPowerSaveModeChanged(boolean isPowerSaveMode);
 
     private final Context mContext;
@@ -65,14 +73,23 @@ public final class WPEPowerMonitor {
      */
     public void start() {
         if (mIsRegistered) {
+            Log.d(LOGTAG, "Power monitor already started");
             return;
         }
 
+        Log.d(LOGTAG, "Starting power monitor");
+
         IntentFilter filter = new IntentFilter();
         filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
-        mContext.registerReceiver(mReceiver, filter);
+
+        // Android 13+ requires explicit receiver export flag
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            mContext.registerReceiver(mReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            mContext.registerReceiver(mReceiver, filter);
+        }
+
         mIsRegistered = true;
-        Log.d(LOGTAG, "Started monitoring power save mode");
 
         // Send initial state immediately
         notifyState();
@@ -83,23 +100,45 @@ public final class WPEPowerMonitor {
      */
     public void stop() {
         if (!mIsRegistered) {
+            Log.d(LOGTAG, "Power monitor already stopped");
             return;
         }
 
+        Log.d(LOGTAG, "Stopping power monitor");
+
         try {
             mContext.unregisterReceiver(mReceiver);
-            mIsRegistered = false;
-            Log.d(LOGTAG, "Stopped monitoring power save mode");
         } catch (IllegalArgumentException e) {
             // Ignore if receiver was not registered
-            Log.w(LOGTAG, "Receiver was not registered", e);
+            Log.w(LOGTAG, "Receiver was not registered: " + e.getMessage());
         }
+
+        mIsRegistered = false;
     }
 
+    /**
+     * Queries the current power save mode state and notifies native code.
+     */
     private void notifyState() {
         PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
         boolean isPowerSave = (pm != null) && pm.isPowerSaveMode();
+
         Log.d(LOGTAG, "Power save mode: " + isPowerSave);
-        nativeOnPowerSaveModeChanged(isPowerSave);
+
+        try {
+            nativeOnPowerSaveModeChanged(isPowerSave);
+        } catch (UnsatisfiedLinkError e) {
+            Log.e(LOGTAG, "Native method not available: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Returns whether the device is currently in Battery Saver mode.
+     *
+     * @return true if Battery Saver is enabled
+     */
+    public boolean isPowerSaveMode() {
+        PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
+        return (pm != null) && pm.isPowerSaveMode();
     }
 }

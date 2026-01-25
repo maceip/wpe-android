@@ -19,6 +19,29 @@
 
 #pragma once
 
+#include <glib.h>
+
+G_BEGIN_DECLS
+
+/**
+ * Updates the battery saver state from Java layer.
+ * This is called via JNI when the battery saver mode changes.
+ *
+ * @param isPowerSaveMode TRUE if Battery Saver is enabled
+ */
+void wpe_android_power_profile_monitor_set_battery_saver(gboolean isPowerSaveMode);
+
+/**
+ * Updates the thermal throttling state.
+ * This can be called from native code if needed, though thermal status
+ * is typically monitored internally via AThermalManager.
+ *
+ * @param isThermalThrottling TRUE if thermal throttling is active
+ */
+void wpe_android_power_profile_monitor_set_thermal_throttling(gboolean isThermalThrottling);
+
+G_END_DECLS
+
 /**
  * WPEAndroidPowerProfileMonitor implements GPowerProfileMonitor for Android.
  *
@@ -30,7 +53,6 @@
  * will see the "power-saver-enabled" property as TRUE, causing WebKit to reduce
  * timer precision, stop smooth animations, and throttle background tabs.
  */
-
 class WPEAndroidPowerProfileMonitor {
 public:
     /**
