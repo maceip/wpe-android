@@ -25,13 +25,8 @@
 #include <atomic>
 #include <gio/gio.h>
 
-// NDK Thermal API (API level 30+)
-#if __ANDROID_API__ >= 30
+// NDK Thermal API (API level 30+) - always include, use runtime detection
 #include <android/thermal.h>
-#define HAVE_THERMAL_API 1
-#else
-#define HAVE_THERMAL_API 0
-#endif
 
 /***********************************************************************************************************************
  * GObject Type Definition for WPEAndroidPowerProfileMonitor
@@ -49,9 +44,7 @@ G_DECLARE_FINAL_TYPE(
 struct _WPEAndroidPowerMonitor {
     GObject parentInstance;
 
-#if HAVE_THERMAL_API
     AThermalManager* thermalManager;
-#endif
 
     // Use atomics for thread-safe flag storage
     // NDK thermal callbacks occur on Binder threads, JNI calls may be on UI thread
@@ -82,7 +75,6 @@ static void updatePowerStateOnMainThread(WPEAndroidPowerMonitor* self)
  * NDK Thermal Status Callback (API 30+)
  **********************************************************************************************************************/
 
-#if HAVE_THERMAL_API
 static void onThermalStatusChanged(void* data, AThermalStatus status)
 {
     auto* self = WPE_ANDROID_POWER_PROFILE_MONITOR(data);
@@ -105,7 +97,6 @@ static void onThermalStatusChanged(void* data, AThermalStatus status)
             self);
     }
 }
-#endif
 
 /***********************************************************************************************************************
  * JNI Callback from Java WPEPowerMonitor
@@ -183,29 +174,30 @@ static void wpe_android_power_profile_monitor_init(WPEAndroidPowerMonitor* self)
     Logging::logDebug("WPEAndroidPowerProfileMonitor: init [tid %d]", gettid());
     s_singleton = self;
 
+    self->thermalManager = nullptr;
     self->isBatterySaverActive.store(false);
     self->isThermalThrottling.store(false);
 
-#if HAVE_THERMAL_API
-    // Acquire NDK Thermal Manager (API 30+)
-    self->thermalManager = AThermal_acquireManager();
-    if (self->thermalManager != nullptr) {
-        int result = AThermal_registerThermalStatusListener(self->thermalManager, onThermalStatusChanged, self);
-        if (result == 0) {
-            // Get initial thermal state
-            AThermalStatus status = AThermal_getCurrentThermalStatus(self->thermalManager);
-            self->isThermalThrottling.store(status >= ATHERMAL_STATUS_SEVERE);
-            Logging::logDebug(
-                "WPEAndroidPowerProfileMonitor: Initial thermal status = %d", static_cast<int>(status));
+    // Acquire NDK Thermal Manager (API 30+) - runtime detection
+    if (__builtin_available(android 30, *)) {
+        self->thermalManager = AThermal_acquireManager();
+        if (self->thermalManager != nullptr) {
+            int result = AThermal_registerThermalStatusListener(self->thermalManager, onThermalStatusChanged, self);
+            if (result == 0) {
+                // Get initial thermal state
+                AThermalStatus status = AThermal_getCurrentThermalStatus(self->thermalManager);
+                self->isThermalThrottling.store(status >= ATHERMAL_STATUS_SEVERE);
+                Logging::logDebug(
+                    "WPEAndroidPowerProfileMonitor: Initial thermal status = %d", static_cast<int>(status));
+            } else {
+                Logging::logError("WPEAndroidPowerProfileMonitor: Failed to register thermal listener: %d", result);
+            }
         } else {
-            Logging::logError("WPEAndroidPowerProfileMonitor: Failed to register thermal listener: %d", result);
+            Logging::logDebug("WPEAndroidPowerProfileMonitor: AThermal_acquireManager returned null");
         }
     } else {
-        Logging::logDebug("WPEAndroidPowerProfileMonitor: AThermal_acquireManager returned null");
+        Logging::logDebug("WPEAndroidPowerProfileMonitor: Thermal API not available (requires Android 11+)");
     }
-#else
-    Logging::logDebug("WPEAndroidPowerProfileMonitor: Thermal API not available (requires API 30+)");
-#endif
 }
 
 static void wpe_android_power_profile_monitor_finalize(GObject* object)
@@ -213,13 +205,13 @@ static void wpe_android_power_profile_monitor_finalize(GObject* object)
     auto* self = WPE_ANDROID_POWER_PROFILE_MONITOR(object);
     Logging::logDebug("WPEAndroidPowerProfileMonitor: finalize [tid %d]", gettid());
 
-#if HAVE_THERMAL_API
-    if (self->thermalManager != nullptr) {
-        AThermal_unregisterThermalStatusListener(self->thermalManager, onThermalStatusChanged, self);
-        AThermal_releaseManager(self->thermalManager);
-        self->thermalManager = nullptr;
+    if (__builtin_available(android 30, *)) {
+        if (self->thermalManager != nullptr) {
+            AThermal_unregisterThermalStatusListener(self->thermalManager, onThermalStatusChanged, self);
+            AThermal_releaseManager(self->thermalManager);
+            self->thermalManager = nullptr;
+        }
     }
-#endif
 
     s_singleton = nullptr;
     G_OBJECT_CLASS(wpe_android_power_profile_monitor_parent_class)->finalize(object);
