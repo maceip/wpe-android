@@ -1,6 +1,5 @@
 /**
- * Copyright (C) 2022 Igalia S.L. <info@igalia.com>
- *   Author: Jani Hautakangas <jani@igalia.com>
+ * Copyright (C) 2025 maceip
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -23,20 +22,20 @@
 
 G_BEGIN_DECLS
 
+#define WPE_TYPE_ANDROID_POWER_PROFILE_MONITOR (wpe_android_power_profile_monitor_get_type())
+G_DECLARE_FINAL_TYPE(
+    WPEAndroidPowerMonitor, wpe_android_power_profile_monitor, WPE, ANDROID_POWER_PROFILE_MONITOR, GObject)
+
 /**
  * Updates the battery saver state from Java layer.
- * This is called via JNI when the battery saver mode changes.
- *
- * @param isPowerSaveMode TRUE if Battery Saver is enabled
+ * Called via JNI when the battery saver mode changes.
  */
 void wpe_android_power_profile_monitor_set_battery_saver(gboolean isPowerSaveMode);
 
 /**
  * Updates the thermal throttling state.
- * This can be called from native code if needed, though thermal status
- * is typically monitored internally via AThermalManager.
- *
- * @param isThermalThrottling TRUE if thermal throttling is active
+ * Can be called from native code, though thermal status is typically
+ * monitored internally via AThermalManager.
  */
 void wpe_android_power_profile_monitor_set_thermal_throttling(gboolean isThermalThrottling);
 
@@ -45,25 +44,16 @@ G_END_DECLS
 /**
  * WPEAndroidPowerProfileMonitor implements GPowerProfileMonitor for Android.
  *
- * It aggregates two signals to determine "Low Power Mode":
+ * Aggregates two signals to determine "Low Power Mode":
  * 1. Thermal Status (via NDK AThermalManager, API 30+)
- * 2. Battery Saver Mode (via Java PowerManager, since NDK does not expose the user toggle)
+ * 2. Battery Saver Mode (via Java PowerManager broadcast)
  *
  * When either condition indicates power constraints, WebKit's LowPowerModeNotifierGLib
- * will see the "power-saver-enabled" property as TRUE, causing WebKit to reduce
- * timer precision, stop smooth animations, and throttle background tabs.
+ * sees "power-saver-enabled" as TRUE, causing reduced timer precision, stopped
+ * smooth animations, and throttled background tabs.
  */
 class WPEAndroidPowerProfileMonitor {
 public:
-    /**
-     * Configure JNI mappings for WPEPowerMonitor Java class.
-     * Must be called during library initialization (JNI_OnLoad).
-     */
     static void configureJNIMappings();
-
-    /**
-     * Register this class as the GPowerProfileMonitor implementation for Android.
-     * Must be called after GLib is initialized.
-     */
     static void registerExtension();
 };
