@@ -42,6 +42,38 @@ class BrowserViewModel : ViewModel() {
         }
     }
 
+    fun selectTab(id: String) {
+        _browserState.update {
+            it.copy(selectedTabId = id)
+        }
+    }
+
+    fun updateTabUrl(id: String, url: String) {
+        _browserState.update { state ->
+            val updatedTabs = state.tabs.map { tab ->
+                if (tab.id == id) {
+                    tab.copy(url = url)
+                } else {
+                    tab
+                }
+            }
+            state.copy(tabs = updatedTabs)
+        }
+    }
+
+    fun updateTabLoading(id: String, isLoading: Boolean) {
+        _browserState.update { state ->
+            val updatedTabs = state.tabs.map { tab ->
+                if (tab.id == id) {
+                    tab.copy(isLoading = isLoading)
+                } else {
+                    tab
+                }
+            }
+            state.copy(tabs = updatedTabs)
+        }
+    }
+
     fun findTab(id: String) : Tab {
         return browserState.value.tabs.first{ tab -> tab.id == id }
     }

@@ -1,6 +1,5 @@
 /**
- * Copyright (C) 2022 Igalia S.L. <info@igalia.com>
- *   Author: Jani Hautakangas <jani@igalia.com>
+ * Copyright (C) 2025 Igalia S.L. <info@igalia.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,31 +16,20 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-package org.wpewebkit.tools.minibrowser
+package org.wpewebkit.tools.minibrowser.navigation
 
-import android.content.Context
-import org.wpewebkit.wpeview.WPEView
-import java.util.UUID
+import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.scene.Scene
+import androidx.navigation3.scene.SceneStrategy
+import androidx.navigation3.scene.SceneStrategyScope
 
-data class Tab(
-    val id: String,
-    val webview: WPEView,
-    val url: String,
-    val isLoading: Boolean
-) {
-    companion object {
-        fun newTab(
-            context: Context,
-            url: String
-        ) : Tab {
-            return Tab(
-                UUID.randomUUID().toString(),
-                WPEView(context).apply {
-                    loadUrl(url)
-                },
-                url,
-                true
-            )
+class CompositeSceneStrategy<T : Any>(
+    private val strategies: List<SceneStrategy<T>>
+) : SceneStrategy<T> {
+
+    override fun SceneStrategyScope<T>.calculateScene(entries: List<NavEntry<T>>): Scene<T>? {
+        return strategies.firstNotNullOfOrNull { strategy ->
+            with(strategy) { calculateScene(entries) }
         }
     }
 }

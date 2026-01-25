@@ -1,6 +1,5 @@
 /**
- * Copyright (C) 2022 Igalia S.L. <info@igalia.com>
- *   Author: Jani Hautakangas <jani@igalia.com>
+ * Copyright (C) 2025 Igalia S.L. <info@igalia.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,31 +16,22 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-package org.wpewebkit.tools.minibrowser
+package org.wpewebkit.tools.minibrowser.ui.theme
 
-import android.content.Context
-import org.wpewebkit.wpeview.WPEView
-import java.util.UUID
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 
-data class Tab(
-    val id: String,
-    val webview: WPEView,
-    val url: String,
-    val isLoading: Boolean
-) {
-    companion object {
-        fun newTab(
-            context: Context,
-            url: String
-        ) : Tab {
-            return Tab(
-                UUID.randomUUID().toString(),
-                WPEView(context).apply {
-                    loadUrl(url)
-                },
-                url,
-                true
-            )
-        }
-    }
+private val LightColors = lightColorScheme()
+private val DarkColors = darkColorScheme()
+
+@Composable
+fun MiniBrowserTheme(content: @Composable () -> Unit) {
+    val colors = if (isSystemInDarkTheme()) DarkColors else LightColors
+    MaterialTheme(
+        colorScheme = colors,
+        content = content
+    )
 }
