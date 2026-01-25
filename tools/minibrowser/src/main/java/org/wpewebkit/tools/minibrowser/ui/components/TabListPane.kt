@@ -19,39 +19,35 @@
 
 package org.wpewebkit.tools.minibrowser.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -66,16 +62,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.haze
+import dev.chrisbanes.haze.hazeChild
 import org.wpewebkit.tools.minibrowser.Tab
-
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,25 +86,53 @@ fun TabListPane(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
+    val hazeState = remember { HazeState() }
 
-    // Drag state
+    // drag state
     var draggingItemIndex by remember { mutableIntStateOf(-1) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
+    // check glass effect availability
+    // note: in low power mode, glass effects are disabled to save battery
+    val glassEnabled = try {
+        LocalGlassEffectController.current.isEnabled
+    } catch (e: IllegalStateException) {
+        true // default to enabled if controller not provided
+    }
 
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Tabs (${tabs.size})",
-                        style = MaterialTheme.typography.titleLarge
+            // frosted glass top bar - content renders "under" it
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (glassEnabled) {
+                            Modifier.hazeChild(
+                                state = hazeState,
+                                style = HazeStyle(
+                                    tint = HazeTint(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)),
+                                    blurRadius = 24.dp
+                                )
+                            )
+                        } else {
+                            Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                        }
                     )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "Tabs (${tabs.size})",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
+                    )
                 )
-            )
+            }
         },
         floatingActionButton = {
             FloatingActionButton(
@@ -120,217 +144,103 @@ fun TabListPane(
                     contentDescription = "New Tab"
                 )
             }
-        }
+        },
+        containerColor = Color.Transparent
     ) { paddingValues ->
-        if (tabs.isEmpty()) {
-            EmptyTabsMessage(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            )
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                itemsIndexed(
-                    items = tabs,
-                    key = { _, tab -> tab.id }
-                ) { index, tab ->
-                    val isDragging = draggingItemIndex == index
-
-                    // Animate elevation for dragged item
-                    val elevation by animateDpAsState(
-                        targetValue = if (isDragging) 8.dp else if (tab.id == selectedTabId) 4.dp else 1.dp,
-                        label = "elevation"
-                    )
-
-                    TabListItem(
-                        tab = tab,
-                        isSelected = tab.id == selectedTabId,
-                        isDragging = isDragging,
-                        elevation = elevation,
-                        onClick = { onTabClick(tab) },
-                        onClose = { onTabClose(tab) },
-                        modifier = Modifier
-                            .zIndex(if (isDragging) 1f else 0f)
-                            .offset {
-                                IntOffset(
-                                    x = 0,
-                                    y = if (isDragging) dragOffsetY.roundToInt() else 0
-                                )
-                            }
-                            .graphicsLayer {
-                                scaleX = if (isDragging) 1.02f else 1f
-                                scaleY = if (isDragging) 1.02f else 1f
-                            }
-                            .pointerInput(tabs.size) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        draggingItemIndex = index
-                                        dragOffsetY = 0f
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        dragOffsetY += dragAmount.y
-
-                                        // Calculate the target index based on drag position
-                                        val itemHeight = 80.dp.toPx() + 8.dp.toPx() // approx item height + spacing
-                                        val targetIndex = (index + (dragOffsetY / itemHeight).roundToInt())
-                                            .coerceIn(0, tabs.lastIndex)
-
-                                        if (targetIndex != draggingItemIndex && targetIndex != index) {
-                                            onMoveTab(draggingItemIndex, targetIndex)
-                                            draggingItemIndex = targetIndex
-                                            // Adjust offset to account for the swap
-                                            dragOffsetY -= (targetIndex - index) * itemHeight
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        draggingItemIndex = -1
-                                        dragOffsetY = 0f
-                                    },
-                                    onDragCancel = {
-                                        draggingItemIndex = -1
-                                        dragOffsetY = 0f
-                                    }
-                                )
-                            }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TabListItem(
-    tab: Tab,
-    isSelected: Boolean,
-    isDragging: Boolean,
-    elevation: androidx.compose.ui.unit.Dp,
-    onClick: () -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .shadow(elevation, RoundedCornerShape(12.dp))
-            .clickable(enabled = !isDragging, onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDragging) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
-            } else if (isSelected) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            }
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth()
+        // main content area - source for glass blur
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .haze(hazeState)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Drag handle indicator (visible when dragging or on hover conceptually)
-                Icon(
-                    imageVector = Icons.Default.DragHandle,
-                    contentDescription = "Drag to reorder",
-                    tint = if (isDragging || isSelected) {
-                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                    },
-                    modifier = Modifier.size(20.dp)
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Favicon placeholder
-                Box(
+            if (tabs.isEmpty()) {
+                EmptyTabsMessage(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Language,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = tab.title.ifEmpty { "New Tab" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (isDragging || isSelected) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = tab.url.ifEmpty { "about:blank" },
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (isDragging || isSelected) {
-                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        }
-                    )
-                }
-
-                IconButton(
-                    onClick = onClose,
-                    enabled = !isDragging,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close Tab",
-                        tint = if (isDragging || isSelected) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-
-            // Progress indicator when loading
-            if (tab.isLoading) {
-                LinearProgressIndicator(
-                    progress = { tab.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        .fillMaxSize()
+                        .padding(paddingValues)
                 )
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    itemsIndexed(
+                        items = tabs,
+                        key = { _, tab -> tab.id }
+                    ) { index, tab ->
+                        val isDragging = draggingItemIndex == index
+
+                        // generate theme from URL - creates deterministic "zany" colors
+                        val theme = remember(tab.url) {
+                            if (tab.url.isNotEmpty()) generateThemeFromUrl(tab.url)
+                            else TabCardTheme.Default
+                        }
+
+                        // animate elevation
+                        val elevation by animateDpAsState(
+                            targetValue = when {
+                                isDragging -> 12.dp
+                                tab.id == selectedTabId -> 6.dp
+                                else -> 2.dp
+                            },
+                            animationSpec = spring(),
+                            label = "elevation"
+                        )
+
+                        AnimatedVisibility(
+                            visible = true,
+                            enter = fadeIn() + scaleIn(initialScale = 0.92f),
+                            exit = fadeOut() + scaleOut(targetScale = 0.92f)
+                        ) {
+                            ChunkyTabCard(
+                                tab = tab,
+                                theme = theme,
+                                isSelected = tab.id == selectedTabId,
+                                isDragging = isDragging,
+                                elevation = elevation,
+                                dragOffsetY = if (isDragging) dragOffsetY else 0f,
+                                onClick = { onTabClick(tab) },
+                                onClose = { onTabClose(tab) },
+                                modifier = Modifier
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .pointerInput(tabs.size) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                draggingItemIndex = index
+                                                dragOffsetY = 0f
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragOffsetY += dragAmount.y
+
+                                                val itemHeight = 100.dp.toPx()
+                                                val targetIndex = (index + (dragOffsetY / itemHeight).roundToInt())
+                                                    .coerceIn(0, tabs.lastIndex)
+
+                                                if (targetIndex != draggingItemIndex && targetIndex != index) {
+                                                    onMoveTab(draggingItemIndex, targetIndex)
+                                                    draggingItemIndex = targetIndex
+                                                    dragOffsetY -= (targetIndex - index) * itemHeight
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                draggingItemIndex = -1
+                                                dragOffsetY = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggingItemIndex = -1
+                                                dragOffsetY = 0f
+                                            }
+                                        )
+                                    }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -347,17 +257,26 @@ private fun EmptyTabsMessage(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                imageVector = Icons.Default.Language,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+            // chunky icon container
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Language,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                )
+            }
+            Spacer(modifier = Modifier.height(20.dp))
             Text(
                 text = "No open tabs",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(

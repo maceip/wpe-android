@@ -81,6 +81,11 @@ dependencies {
     // Serialization for NavKey
     implementation libs.kotlinx.serialization.json
 
+    // Glass/blur effects
+    implementation libs.haze
+    implementation libs.haze.materials
+    implementation libs.androidx.palette
+
     modules {
         module("org.jetbrains.kotlin:kotlin-stdlib-jdk7") {
             replacedBy("org.jetbrains.kotlin:kotlin-stdlib", "kotlin-stdlib-jdk7 is now part of kotlin-stdlib")

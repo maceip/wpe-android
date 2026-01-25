@@ -20,8 +20,8 @@
 package org.wpewebkit.tools.minibrowser.ui.components
 
 import android.view.ViewGroup
-
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -61,16 +62,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.haze
+import dev.chrisbanes.haze.hazeChild
 import org.wpewebkit.tools.minibrowser.SEARCH_URI_BASE
 import org.wpewebkit.tools.minibrowser.Tab
 import org.wpewebkit.tools.minibrowser.normalizeAddress
@@ -89,21 +96,32 @@ fun WebViewPane(
     var showMenu by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
+    val hazeState = remember { HazeState() }
+
+    // check glass effect availability
+    // note: in low power mode, glass effects are disabled to save battery
+    val glassEnabled = try {
+        LocalGlassEffectController.current.isEnabled
+    } catch (e: IllegalStateException) {
+        true
+    }
 
     if (!isUrlFocused && urlInputText != tab.url) {
         urlInputText = tab.url
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .systemBarsPadding()
             .imePadding()
     ) {
+        // webview content - source for glass blur
+        // the nav bar at bottom will render content "under" it with frosted glass effect
         Box(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+                .fillMaxSize()
+                .haze(hazeState)
                 .onSizeChanged { size ->
                     // notify webkit when pane size changes (e.g. list-detail transition)
                     tab.webview.requestLayout()
@@ -128,28 +146,46 @@ fun WebViewPane(
             )
         }
 
-        if (tab.isLoading) {
-            LinearProgressIndicator(
-                progress = { tab.progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        }
-
+        // frosted glass navigation bar at bottom
+        // page content renders "up under it" for immersive feel
         Column(
             modifier = Modifier
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
+                .then(
+                    if (glassEnabled) {
+                        Modifier.hazeChild(
+                            state = hazeState,
+                            style = HazeStyle(
+                                tint = HazeTint(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
+                                blurRadius = 24.dp
+                            )
+                        )
+                    } else {
+                        Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                    }
+                )
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
         ) {
+            // progress indicator
+            if (tab.isLoading) {
+                LinearProgressIndicator(
+                    progress = { tab.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.Transparent
+                )
+            }
+
+            // url bar with chunky rounded shape
             OutlinedTextField(
                 value = urlInputText,
                 onValueChange = { urlInputText = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
                     .focusRequester(focusRequester)
                     .onFocusChanged { focusState ->
                         isUrlFocused = focusState.isFocused
@@ -158,12 +194,12 @@ fun WebViewPane(
                     Text("Search or enter URL")
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(28.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    unfocusedBorderColor = Color.Transparent
                 ),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Uri,
@@ -188,10 +224,11 @@ fun WebViewPane(
                 } else null
             )
 
+            // navigation row with chunky buttons
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
@@ -234,8 +271,7 @@ fun WebViewPane(
                 Spacer(modifier = Modifier.weight(1f))
 
                 if (showTabsButton) {
-                    TabCountButton(
-                        count = 1, // Will be provided by parent
+                    ChunkyTabsButton(
                         onClick = onTabsClick
                     )
                     Spacer(modifier = Modifier.width(4.dp))
@@ -286,25 +322,26 @@ private fun processUrlInput(text: String): String {
     }
 }
 
+/**
+ * Chunky tabs button with thick border
+ */
 @Composable
-private fun TabCountButton(
-    count: Int,
+private fun ChunkyTabsButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier
-            .background(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = count.toString(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(
+            imageVector = Icons.Default.GridView,
+            contentDescription = "View tabs",
+            tint = MaterialTheme.colorScheme.onPrimaryContainer
         )
     }
 }
