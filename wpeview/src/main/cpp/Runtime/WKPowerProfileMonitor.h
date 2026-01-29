@@ -1,5 +1,6 @@
 /**
- * Copyright (C) 2025 maceip
+ * Copyright (C) 2025 Igalia S.L. <info@igalia.com>
+ *   Author: maceip
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
