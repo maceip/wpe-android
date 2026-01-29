@@ -16,12 +16,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "WPEAndroidPowerProfileMonitor.h"
+#include "WKPowerProfileMonitor.h"
 
 #include "JNI/JNI.h"
 #include "Logging.h"
 
-#include <atomic>
 #include <gio/gio.h>
 
 // NDK Thermal API (API level 30+) - always include, use runtime detection
@@ -37,56 +36,72 @@
  * When either thermal throttling is active (SEVERE or higher) or Battery Saver
  * mode is enabled, the monitor reports power-saver-enabled=TRUE to WebKit.
  */
-struct _WPEAndroidPowerMonitor {
-    GObject parentInstance;
+struct _WPEAndroidPowerProfileMonitor {
+    GObject parent;
 
     AThermalManager* thermalManager;
 
     // Thread-safe flags: NDK thermal callbacks occur on Binder threads,
-    // JNI calls may be on UI thread
-    std::atomic<bool> isBatterySaverActive;
-    std::atomic<bool> isThermalThrottling;
+    // JNI calls may be on UI thread. Using gint with g_atomic_int_* for
+    // GLib-compatible atomic operations.
+    gint isBatterySaverActive;
+    gint isThermalThrottling;
 };
 
 enum { PROP_0, PROP_POWER_SAVER_ENABLED, N_PROPERTIES };
 
-static WPEAndroidPowerMonitor* s_singleton = nullptr;
+static WPEAndroidPowerProfileMonitor* s_singleton = nullptr;
 
-static void wpeAndroidPowerProfileMonitorIfaceInit(GPowerProfileMonitorInterface* iface);
+static void wpeAndroidPowerProfileMonitorIfaceInit(GPowerProfileMonitorInterface*);
 
-G_DEFINE_FINAL_TYPE_WITH_CODE(WPEAndroidPowerMonitor, wpe_android_power_profile_monitor, G_TYPE_OBJECT,
+G_DEFINE_FINAL_TYPE_WITH_CODE(WPEAndroidPowerProfileMonitor, wpe_android_power_profile_monitor, G_TYPE_OBJECT,
     G_IMPLEMENT_INTERFACE(G_TYPE_POWER_PROFILE_MONITOR, wpeAndroidPowerProfileMonitorIfaceInit))
 
-static void updatePowerStateOnMainThread(WPEAndroidPowerMonitor* self)
+static void scheduleUpdateOnMainThread(WPEAndroidPowerProfileMonitor* self)
 {
-    bool isPowerSaverEnabled = self->isBatterySaverActive.load() || self->isThermalThrottling.load();
-    Logging::logDebug("WPEAndroidPowerProfileMonitor: power-saver-enabled=%s (battery=%s, thermal=%s)",
-        isPowerSaverEnabled ? "true" : "false", self->isBatterySaverActive.load() ? "true" : "false",
-        self->isThermalThrottling.load() ? "true" : "false");
+    g_main_context_invoke(
+        nullptr,
+        +[](gpointer userData) -> gboolean {
+            auto* monitor = WPE_ANDROID_POWER_PROFILE_MONITOR(userData);
+            bool isPowerSaverEnabled
+                = g_atomic_int_get(&monitor->isBatterySaverActive) || g_atomic_int_get(&monitor->isThermalThrottling);
+            Logging::logDebug("WPEAndroidPowerProfileMonitor: power-saver-enabled=%s (battery=%s, thermal=%s)",
+                isPowerSaverEnabled ? "true" : "false",
+                g_atomic_int_get(&monitor->isBatterySaverActive) ? "true" : "false",
+                g_atomic_int_get(&monitor->isThermalThrottling) ? "true" : "false");
 
-    g_object_notify(G_OBJECT(self), "power-saver-enabled");
+            g_object_notify(G_OBJECT(monitor), "power-saver-enabled");
+            return G_SOURCE_REMOVE;
+        },
+        self);
 }
 
-// AThermalStatus values:
-//   ATHERMAL_STATUS_NONE = 0, LIGHT = 1, MODERATE = 2, SEVERE = 3,
-//   CRITICAL = 4, EMERGENCY = 5, SHUTDOWN = 6
 static void onThermalStatusChanged(void* data, AThermalStatus status)
 {
     auto* self = WPE_ANDROID_POWER_PROFILE_MONITOR(data);
-    bool throttling = (status >= ATHERMAL_STATUS_SEVERE);
+    gint throttling = (status >= ATHERMAL_STATUS_SEVERE) ? TRUE : FALSE;
 
     Logging::logDebug("WPEAndroidPowerProfileMonitor::onThermalStatusChanged(%d, throttling=%s)",
         static_cast<int>(status), throttling ? "true" : "false");
 
-    if (self->isThermalThrottling.load() != throttling) {
-        self->isThermalThrottling.store(throttling);
-        g_main_context_invoke(
-            nullptr,
-            +[](gpointer userData) -> gboolean {
-                updatePowerStateOnMainThread(WPE_ANDROID_POWER_PROFILE_MONITOR(userData));
-                return G_SOURCE_REMOVE;
-            },
-            self);
+    if (g_atomic_int_get(&self->isThermalThrottling) != throttling) {
+        g_atomic_int_set(&self->isThermalThrottling, throttling);
+        scheduleUpdateOnMainThread(self);
+    }
+}
+
+static void setBatterySaver(gboolean isPowerSaveMode)
+{
+    if (s_singleton == nullptr) {
+        Logging::logDebug("WPEAndroidPowerProfileMonitor::setBatterySaver called before init, ignoring");
+        return;
+    }
+
+    gint newValue = isPowerSaveMode ? TRUE : FALSE;
+    if (g_atomic_int_get(&s_singleton->isBatterySaverActive) != newValue) {
+        Logging::logDebug("WPEAndroidPowerProfileMonitor: Battery saver changed to %s", newValue ? "true" : "false");
+        g_atomic_int_set(&s_singleton->isBatterySaverActive, newValue);
+        scheduleUpdateOnMainThread(s_singleton);
     }
 }
 
@@ -106,7 +121,7 @@ private:
     {
         bool newVal = (isPowerSave != JNI_FALSE);
         Logging::logDebug("WPEAndroidPowerProfileMonitor::nativeOnPowerSaveModeChanged(%s)", newVal ? "true" : "false");
-        wpe_android_power_profile_monitor_set_battery_saver(newVal ? TRUE : FALSE);
+        setBatterySaver(newVal ? TRUE : FALSE);
     }
 };
 
@@ -116,10 +131,9 @@ static const JNIWPEPowerMonitorCache& getJNIWPEPowerMonitorCache()
     return s_singleton;
 }
 
-static void wpeAndroidPowerProfileMonitorIfaceInit(GPowerProfileMonitorInterface* iface)
+static void wpeAndroidPowerProfileMonitorIfaceInit(GPowerProfileMonitorInterface*)
 {
     // Interface implemented via "power-saver-enabled" property override
-    (void)iface;
 }
 
 static void wpeAndroidPowerProfileMonitorGetProperty(GObject* object, guint propId, GValue* value, GParamSpec* pspec)
@@ -128,8 +142,9 @@ static void wpeAndroidPowerProfileMonitorGetProperty(GObject* object, guint prop
 
     switch (propId) {
     case PROP_POWER_SAVER_ENABLED:
-        g_value_set_boolean(
-            value, static_cast<gboolean>(self->isBatterySaverActive.load() || self->isThermalThrottling.load()));
+        g_value_set_boolean(value,
+            static_cast<gboolean>(
+                g_atomic_int_get(&self->isBatterySaverActive) || g_atomic_int_get(&self->isThermalThrottling)));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, pspec);
@@ -137,14 +152,14 @@ static void wpeAndroidPowerProfileMonitorGetProperty(GObject* object, guint prop
     }
 }
 
-static void wpe_android_power_profile_monitor_init(WPEAndroidPowerMonitor* self)
+static void wpe_android_power_profile_monitor_init(WPEAndroidPowerProfileMonitor* self)
 {
     Logging::logDebug("WPEAndroidPowerProfileMonitor::init(%p)", static_cast<void*>(self));
 
     s_singleton = self;
     self->thermalManager = nullptr;
-    self->isBatterySaverActive.store(false);
-    self->isThermalThrottling.store(false);
+    g_atomic_int_set(&self->isBatterySaverActive, FALSE);
+    g_atomic_int_set(&self->isThermalThrottling, FALSE);
 
     if (__builtin_available(android 30, *)) {
         self->thermalManager = AThermal_acquireManager();
@@ -154,9 +169,9 @@ static void wpe_android_power_profile_monitor_init(WPEAndroidPowerMonitor* self)
             int result = AThermal_registerThermalStatusListener(self->thermalManager, onThermalStatusChanged, self);
             if (result == 0) {
                 AThermalStatus status = AThermal_getCurrentThermalStatus(self->thermalManager);
-                self->isThermalThrottling.store(status >= ATHERMAL_STATUS_SEVERE);
+                g_atomic_int_set(&self->isThermalThrottling, (status >= ATHERMAL_STATUS_SEVERE) ? TRUE : FALSE);
                 Logging::logDebug("WPEAndroidPowerProfileMonitor: Initial thermal status=%d, throttling=%s",
-                    static_cast<int>(status), self->isThermalThrottling.load() ? "true" : "false");
+                    static_cast<int>(status), g_atomic_int_get(&self->isThermalThrottling) ? "true" : "false");
             } else {
                 Logging::logError("WPEAndroidPowerProfileMonitor: Failed to register thermal listener: %d", result);
             }
@@ -187,7 +202,7 @@ static void wpeAndroidPowerProfileMonitorDispose(GObject* object)
     G_OBJECT_CLASS(wpe_android_power_profile_monitor_parent_class)->dispose(object);
 }
 
-static void wpe_android_power_profile_monitor_class_init(WPEAndroidPowerMonitorClass* klass)
+static void wpe_android_power_profile_monitor_class_init(WPEAndroidPowerProfileMonitorClass* klass)
 {
     GObjectClass* objectClass = G_OBJECT_CLASS(klass);
     objectClass->dispose = wpeAndroidPowerProfileMonitorDispose;
@@ -196,58 +211,15 @@ static void wpe_android_power_profile_monitor_class_init(WPEAndroidPowerMonitorC
     g_object_class_override_property(objectClass, PROP_POWER_SAVER_ENABLED, "power-saver-enabled");
 }
 
-void wpe_android_power_profile_monitor_set_battery_saver(gboolean isPowerSaveMode)
+void WKPowerProfileMonitor::configureJNIMappings()
 {
-    if (s_singleton == nullptr) {
-        Logging::logDebug("WPEAndroidPowerProfileMonitor::set_battery_saver called before init, ignoring");
-        return;
-    }
-
-    bool newValue = (isPowerSaveMode != FALSE);
-    if (s_singleton->isBatterySaverActive.load() != newValue) {
-        Logging::logDebug("WPEAndroidPowerProfileMonitor: Battery saver changed to %s", newValue ? "true" : "false");
-        s_singleton->isBatterySaverActive.store(newValue);
-        g_main_context_invoke(
-            nullptr,
-            +[](gpointer userData) -> gboolean {
-                updatePowerStateOnMainThread(WPE_ANDROID_POWER_PROFILE_MONITOR(userData));
-                return G_SOURCE_REMOVE;
-            },
-            s_singleton);
-    }
-}
-
-void wpe_android_power_profile_monitor_set_thermal_throttling(gboolean isThermalThrottling)
-{
-    if (s_singleton == nullptr) {
-        Logging::logDebug("WPEAndroidPowerProfileMonitor::set_thermal_throttling called before init, ignoring");
-        return;
-    }
-
-    bool newValue = (isThermalThrottling != FALSE);
-    if (s_singleton->isThermalThrottling.load() != newValue) {
-        Logging::logDebug(
-            "WPEAndroidPowerProfileMonitor: Thermal throttling changed to %s", newValue ? "true" : "false");
-        s_singleton->isThermalThrottling.store(newValue);
-        g_main_context_invoke(
-            nullptr,
-            +[](gpointer userData) -> gboolean {
-                updatePowerStateOnMainThread(WPE_ANDROID_POWER_PROFILE_MONITOR(userData));
-                return G_SOURCE_REMOVE;
-            },
-            s_singleton);
-    }
-}
-
-void WPEAndroidPowerProfileMonitor::configureJNIMappings()
-{
-    Logging::logDebug("WPEAndroidPowerProfileMonitor::configureJNIMappings()");
+    Logging::logDebug("WKPowerProfileMonitor::configureJNIMappings()");
     getJNIWPEPowerMonitorCache();
 }
 
-void WPEAndroidPowerProfileMonitor::registerExtension()
+void WKPowerProfileMonitor::registerExtension()
 {
-    Logging::logDebug("WPEAndroidPowerProfileMonitor::registerExtension()");
+    Logging::logDebug("WKPowerProfileMonitor::registerExtension()");
 
     g_type_ensure(WPE_TYPE_ANDROID_POWER_PROFILE_MONITOR);
 
@@ -258,5 +230,5 @@ void WPEAndroidPowerProfileMonitor::registerExtension()
     g_io_extension_point_implement(
         G_POWER_PROFILE_MONITOR_EXTENSION_POINT_NAME, WPE_TYPE_ANDROID_POWER_PROFILE_MONITOR, "android", 10);
 
-    Logging::logDebug("WPEAndroidPowerProfileMonitor: Registered as GPowerProfileMonitor extension");
+    Logging::logDebug("WKPowerProfileMonitor: Registered as GPowerProfileMonitor extension");
 }

@@ -24,25 +24,12 @@ G_BEGIN_DECLS
 
 #define WPE_TYPE_ANDROID_POWER_PROFILE_MONITOR (wpe_android_power_profile_monitor_get_type())
 G_DECLARE_FINAL_TYPE(
-    WPEAndroidPowerMonitor, wpe_android_power_profile_monitor, WPE, ANDROID_POWER_PROFILE_MONITOR, GObject)
-
-/**
- * Updates the battery saver state from Java layer.
- * Called via JNI when the battery saver mode changes.
- */
-void wpe_android_power_profile_monitor_set_battery_saver(gboolean isPowerSaveMode);
-
-/**
- * Updates the thermal throttling state.
- * Can be called from native code, though thermal status is typically
- * monitored internally via AThermalManager.
- */
-void wpe_android_power_profile_monitor_set_thermal_throttling(gboolean isThermalThrottling);
+    WPEAndroidPowerProfileMonitor, wpe_android_power_profile_monitor, WPE, ANDROID_POWER_PROFILE_MONITOR, GObject)
 
 G_END_DECLS
 
 /**
- * WPEAndroidPowerProfileMonitor implements GPowerProfileMonitor for Android.
+ * WKPowerProfileMonitor implements GPowerProfileMonitor for Android.
  *
  * Aggregates two signals to determine "Low Power Mode":
  * 1. Thermal Status (via NDK AThermalManager, API 30+)
@@ -52,7 +39,7 @@ G_END_DECLS
  * sees "power-saver-enabled" as TRUE, causing reduced timer precision, stopped
  * smooth animations, and throttled background tabs.
  */
-class WPEAndroidPowerProfileMonitor {
+class WKPowerProfileMonitor {
 public:
     static void configureJNIMappings();
     static void registerExtension();
